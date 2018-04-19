@@ -7,7 +7,7 @@ import org.apache.spark.SparkConf
 object WordCount {
     def main (args: Array[String]): Unit = {
         // Create new spark context
-        val sc: SparkContext = new SparkContext(new SparkConf().setAppName("Spark Count"))
+        val sc: SparkContext = new SparkContext(new SparkConf().setAppName("Spark Count").setMaster("yarn"))
         // Create an RDD from the input text file 
         val inputRDD = sc.textFile(args(0))
         // ... and split it into words
@@ -15,6 +15,6 @@ object WordCount {
         // Count words
         val wordCounts = words.map((_, 1)).reduceByKey(_ + _)
         // Write to a file
-        wordsCounts.saveAsTextFile(args(1))
+        wordCounts.saveAsTextFile(args(1))
     }
 }
