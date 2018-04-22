@@ -10,6 +10,21 @@
     <artifactId>yelp-reviews</artifactId>
     <version>1.0</version>
 
+	<repositories>
+        <repository>
+            <id>bintrayjohnsnowlabsjohnsnowlabs</id>
+            <name>bintray-johnsnowlabs-johnsnowlabs</name>
+            <url>https://dl.bintray.com/johnsnowlabs/johnsnowlabs/</url>
+            <layout>default</layout>
+        </repository>
+        <repository>
+            <id>SparkPackagesRepo</id>
+            <name>Spark Packages Repo</name>
+            <url>https://dl.bintray.com/spark-packages/maven/</url>
+            <layout>default</layout>
+        </repository>
+    </repositories>
+	
     <dependencies>
         <dependency>
             <groupId>org.scala-lang</groupId>
