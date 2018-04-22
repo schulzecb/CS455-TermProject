@@ -14,12 +14,13 @@ object TopUsers {
         // Create new spark context
         val sc: SparkContext = new SparkContext(new SparkConf().setAppName("Spark Count"))
         //read the yelp_user.csv file
-        val user_csv = sc.read.option("header", "true").csv("hdfs:///term-project/yelp-dataset/yelp_user.csv")
+        val user_csv = sc.read.option("header", "true").csv(args(0))
         //turn this into a view - this allows us to use this as a "table"
         user_csv.createOrReplaceTempView("users")
         //generate the top 10 users
         val top = sc.sql("SELECT user_id, name, review_count FROM users ORDER BY review_count DESC LIMIT 10")
-        top.write.format("csv").option("header", "true").save("hdfs:///term-project/top_users")
+        //save the file 
+        top.write.format("csv").option("header", "true").save(args(1))
     }
 }
  
