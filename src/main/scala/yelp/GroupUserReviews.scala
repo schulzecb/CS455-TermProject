@@ -3,10 +3,13 @@ package yelp
 import org.apache.spark.SparkContext
 import org.apache.spark.SparkContext._
 import org.apache.spark.SparkConf
+import org.apache.spark.sql.functions.col
+
 /**
  * To run:
- * $SPARK_HOME/bin/spark-submit --class yelp.TopUsers ./target/original-yelp-reviews-1.0.jar 
+ * $SPARK_HOME/bin/spark-submit --class yelp.GroupUserReviews ./target/original-yelp-reviews-1.0.jar 
  * \<hdfs_input_path> (yelp_user.csv)
+ * \<hdfs_input_path> (top users csv)
  * \<hdfs_output_path>
  */
 object GroupUserReviews {
@@ -24,16 +27,16 @@ object GroupUserReviews {
         //read the yelp_user.csv file
         val review_csv = sqlContext.read.option("header", "true").csv(args(0))
         //filter the reviews to only "positive" reviews (3 stars or more)
-        val positive_reviews = reviews_csv.where($"stars" > 3)
+        val positive_reviews = review_csv.where(col("stars") > 3)
         //filter further based on the topusers_list
-        val top_user_reviews = positive_reviews.where($"user_id".isin(topusers_list:_*))
+        val top_user_reviews = positive_reviews.where(col("user_id").isin(topusers_list:_*))
         
-        
-        
-        
-        
-        
+        //take only user_id and review from top_user_reviews
+        val idReviewPair = top_user_reviews.select("user_id", "text").rdd.map((row) => (row(0), row(1)))
+        //reduce by key in order to group the data
+        val groupedData = idReviewPair.reduceByKey(_ + " " + _)
+   
         //save the file 
-        top.write.format("csv").option("header", "true").save(args(2))
+        groupedData.saveAsTextFile(args(2))
     }
 } 
