@@ -19,24 +19,30 @@ object GroupUserReviews {
         //need to create a SQL context
         val sqlContext = new org.apache.spark.sql.SQLContext(sc)
         
-        //pull in the csv that contains the top users
-        val topusers_csv = sqlContext.read.option("header", "true").csv(args(1))
-        //transform the topusers_csv into a list that can be easily read
-        val topusers_list = topusers_csv.rdd.map(r => r(0)).collect()
         
         //read the yelp_user.csv file
         val review_csv = sqlContext.read.option("header", "true").csv(args(0))
         //filter the reviews to only "positive" reviews (3 stars or more)
         val positive_reviews = review_csv.where(col("stars") > 3)
+        
+        //find 10 users who have written 100 reviews in the yelp dataset and get their ids
+        val user_10 = positive_reviews.groupBy("user_id").count().where(col("count") === 100).limit(10)
+        //turn the 10 user ids into a list
+        val user_list = user_10.rdd.map(r => r(0)).collect()
+        
+        
         //filter further based on the topusers_list
-        val top_user_reviews = positive_reviews.where(col("user_id").isin(topusers_list:_*))
+        val top_user_reviews = positive_reviews.where(col("user_id").isin(user_list:_*))
         
         //take only user_id and review from top_user_reviews
         val idReviewPair = top_user_reviews.select("user_id", "text").rdd.map((row) => (row(0), row(1)))
         //reduce by key in order to group the data
         val groupedData = idReviewPair.reduceByKey(_ + " " + _)
+        
+        //coalesce this into one partition
+        groupedData.coalesce(1)
    
         //save the file 
-        groupedData.saveAsTextFile(args(2))
+        groupedData.saveAsTextFile(args(1))
     }
 } 
