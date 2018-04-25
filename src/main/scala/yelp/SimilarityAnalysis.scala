@@ -12,6 +12,7 @@ import org.apache.spark.mllib.feature.{HashingTF, IDF}
 import org.apache.spark.mllib.linalg.Vector
 import org.apache.spark.rdd.RDD
 import org.apache.spark.mllib.linalg.Vectors
+import org.apache.spark.mllib.linalg.distributed.RowMatrix
 
 /**
  * To run:
@@ -24,31 +25,60 @@ object GroupUserReviews {
         // Create new spark session
         val spark = SparkSession.builder().appName("Group User Reviews").getOrCreate()
 
-        //read in the selected_user_reviews.csv from HDFS
+        //read in the users-cleaned.csv from HDFS
         val user_reviews = spark.read.option("header", "true").csv(args(0))
-        //split users and reviews into two different dataframes
-        var usersDF = user_reviews.select("user_id")
-        var reviewsDF = user_reviews.select("reviews")
+        //read in the business-cleaned (small or large) from HDFS
+        val business_reviews = spark.read.option("header", "true").csv(args(1))
 
-        //start doing TFIDF: https://spark.apache.org/docs/2.2.0/mllib-feature-extraction.html#tf-idf
-        val documentsRDD: RDD[Seq[String]] = reviewsDF.rdd.map((row) => row.getString(0).split(" ").toSeq)
-        val hashingTF = new HashingTF()
-        val tf: RDD[Vector] = hashingTF.transform(documentsRDD)
-        tf.cache()
-        val idf = new IDF().fit(tf)
-        val tfidf: RDD[Vector] = idf.transform(tf)
-        val idfIgnore = new IDF(minDocFreq = 2).fit(tf)
-        val tfidfIgnore: RDD[Vector] = idfIgnore.transform(tf)
+        //perform TFIDF on both users and businesses
+        usersTFIDF = performTFIDF(user_reviews.select("reviews"))
+        businessTFIDF = performTFIDF(business_reviews.select("reviews"))
 
         //now that we did that, we need to build a lookup table based on user ids and the hash codes of the tfidf vectors
-        val createdHashes = tfidfIgnore.map(vec => vec.hashCode())
-        val hashesDF = createdHashes.toDF("hashVal")
-        //create a common key in userDF and hashesDF
-        usersDF = usersDF.withColumn("rowId1", monotonically_increasing_id())
-        val hashesIDDF = hashesDF.withColumn("rowId2", monotonically_increasing_id())
-        val userHashMapping = usersDF.as("df1").join(hashesIDDF.as("df2"), usersDF("rowId1") === hashesIDDF("rowId2"), "inner").select("df1.user_id", "df2.hashVal")
+        userLookup = buildLookupTable(usersTFIDF, user_reviews.select("user_id"), false)
+        businessLookup = buildLookupTable(businessTFIDF, business_reviews.select("business_id"), true)
 
+        //create a column matrix from tfidfIgnore!
+        val tfidfColMatrix = transposeRowMatrix(new RowMatrix(tfidfIgnore))
 
+        //attempt dimsum
+        val threshold = 0.8
+        val estimates = tfidfColMatrix.columnSimilarities(threshold)
+
+    }
+
+    //method to perform tfidf -- returns tfidfIgnore
+    //pass this method only the reviews
+    def performTFIDF(df: DataFrame): RDD[Vector] = {
+      // https://spark.apache.org/docs/2.2.0/mllib-feature-extraction.html#tf-idf
+      val documentsRDD: RDD[Seq[String]] = df.rdd.map((row) => row.getString(0).split(" ").toSeq)
+      val hashingTF = new HashingTF()
+      val tf: RDD[Vector] = hashingTF.transform(documentsRDD)
+      tf.cache()
+      val idf = new IDF().fit(tf)
+      val tfidf: RDD[Vector] = idf.transform(tf)
+      val idfIgnore = new IDF(minDocFreq = 2).fit(tf)
+      val tfidfIgnore: RDD[Vector] = idfIgnore.transform(tf)
+      tfidfIgnore
+    }
+
+    //builds a lookup table for user/business ids and hashcodes for their tfidf vectors
+    def buildLookupTable(tfidfIgnore: RDD[Vector], ids: DataFrame, business: Boolean): DataFrame = {
+      //create the hashes
+      val createdHashes = tfidfIgnore.map(vec => vec.hashCode())
+      //transform created hashes into DF
+      val hashesDF = createdHashes.toDF("hashVal")
+      //create a common key in userDF and hashesDF
+      ids = ids.withColumn("rowId1", monotonically_increasing_id())
+      val hashesIDDF = hashesDF.withColumn("rowId2", monotonically_increasing_id())
+      if (!business) { //make and return userHashMapping
+        val userHashMapping = ids.as("df1").join(hashesIDDF.as("df2"), ids("rowId1") === hashesIDDF("rowId2"), "inner").select("df1.user_id", "df2.hashVal")
+        userHashMapping
+      }
+      else {
+        val businessHashMapping = ids.as("df1").join(hashesIDDF.as("df2"), ids("rowId1") === hashesIDDF("rowId2"), "inner").select("df1.business_id", "df2.hashVal")
+        businessHashMapping
+      }
     }
 
     //METHODS TO TRANPOSE ROW MATRICES SHAMELESSLY STOLEN FROM STACK OVERFLOW <3
