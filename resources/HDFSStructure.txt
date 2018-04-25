@@ -1,0 +1,19 @@
+# Data is read and written from HDFS, this is an attempt to generalize our structure
+# Currently src may not be up to date with this
+
+# Yelp-Data
+/yelp-data/*.csv
+
+# Grouped Reviews --> not in the current state yet
+/grouped-reviews/user/*.csv
+/grouped-reviews/business/*.csv
+
+# Word Lists and Dictionaries
+/dictionaries/word.list
+/dictionaries/holmes.txt
+
+# Preprocessed Data
+/processed-data/user/*.csv
+/processed-data/business/*.csv
+
+# Recommendations??

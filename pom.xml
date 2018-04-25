@@ -12,12 +12,6 @@
 
 	<repositories>
         <repository>
-            <id>bintrayjohnsnowlabsjohnsnowlabs</id>
-            <name>bintray-johnsnowlabs-johnsnowlabs</name>
-            <url>https://dl.bintray.com/johnsnowlabs/johnsnowlabs/</url>
-            <layout>default</layout>
-        </repository>
-        <repository>
             <id>SparkPackagesRepo</id>
             <name>Spark Packages Repo</name>
             <url>https://dl.bintray.com/spark-packages/maven/</url>
@@ -49,13 +43,19 @@
     		<artifactId>spark-hive_2.10</artifactId>
     		<version>2.2.0</version>
 		</dependency>
+		<!-- ML dependencies-->
+		<dependency>
+			<groupId>org.apache.spark</groupId>
+			<artifactId>spark-mllib_2.11</artifactId>
+			<version>2.3.0</version>
+		</dependency>
         <!-- Natural Language Processing Lib -->
         <!-- https://mvnrepository.com/artifact/JohnSnowLabs/spark-nlp -->
-        <dependency>
-            <groupId>JohnSnowLabs</groupId>
-            <artifactId>spark-nlp</artifactId>
-            <version>1.2.3</version>
-        </dependency>
+		<dependency>
+			<groupId>JohnSnowLabs</groupId>
+			<artifactId>spark-nlp</artifactId>
+			<version>1.5.1</version>
+		</dependency>
     </dependencies>
 
     <build>
@@ -76,6 +76,19 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
                 <version>3.0.0</version>
+                 <configuration>
+                <createDependencyReducedPom>false</createDependencyReducedPom>
+                    <filters>
+                        <filter>
+                            <artifact>*:*</artifact>
+                            <excludes>
+                                <exclude>META-INF/*.SF</exclude>
+                                <exclude>META-INF/*.DSA</exclude>
+                                <exclude>META-INF/*.RSA</exclude>
+                            </excludes>
+                        </filter>
+                    </filters>
+                </configuration>
                 <executions>
                     <execution>
                         <phase>package</phase>
