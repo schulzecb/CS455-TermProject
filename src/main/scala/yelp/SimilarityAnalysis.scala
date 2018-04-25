@@ -12,7 +12,7 @@ import org.apache.spark.mllib.feature.{HashingTF, IDF}
 import org.apache.spark.mllib.linalg.Vector
 import org.apache.spark.rdd.RDD
 import org.apache.spark.mllib.linalg.Vectors
-import org.apache.spark.mllib.linalg.distributed.RowMatrix
+import org.apache.spark.mllib.linalg.distributed.{IndexedRow, IndexedRowMatrix, RowMatrix}
 
 /**
  * To run:
@@ -31,12 +31,27 @@ object GroupUserReviews {
         val business_reviews = spark.read.option("header", "true").csv(args(1))
 
         //perform TFIDF on both users and businesses
-        usersTFIDF = performTFIDF(user_reviews.select("reviews"))
-        businessTFIDF = performTFIDF(business_reviews.select("reviews"))
+        val usersTFIDF = performTFIDF(user_reviews.select("reviews"))
+        val businessTFIDF = performTFIDF(business_reviews.select("reviews"))
 
         //now that we did that, we need to build a lookup table based on user ids and the hash codes of the tfidf vectors
-        userLookup = buildLookupTable(usersTFIDF, user_reviews.select("user_id"), false)
-        businessLookup = buildLookupTable(businessTFIDF, business_reviews.select("business_id"), true)
+        //create the hashes
+        val userCreatedHashes = usersTFIDF.map(vec => vec.hashCode())
+        val businessCreatedHashes = businessTFIDF.map(vec => vec.hashCode())
+        //transform created hashes into DF
+        val userHashesDF = userCreatedHashes.toDF("hashVal")
+        val businessHashesDF = businessCreatedHashes.toDF("hashVal")
+
+        //create a common key in userDF and hashesDF
+        val u_commonKey = user_reviews.select("user_id").withColumn("rowId1", monotonically_increasing_id())
+        val userHashesIDDF = userHashesDF.withColumn("rowId2", monotonically_increasing_id())
+        val userHashMapping = u_commonKey.as("df1").join(userHashesIDDF.as("df2"), u_commonKey("rowId1") === userHashesIDDF("rowId2"), "inner").select("df1.user_id", "df2.hashVal")
+
+        val business_commonKey = business_reviews.select("business_id").withColumn("rowId1", monotonically_increasing_id())
+        val businessHashesIDDF = businessHashesDF.withColumn("rowId2", monotonically_increasing_id())
+        val businessHashMapping = business_commonKey.as("df1").join(businessHashesIDDF.as("df2"), business_commonKey("rowId1") === businessHashesIDDF("rowId2"), "inner").select("df1.business_id", "df2.hashVal")
+
+        //create a row matrix from everything!
 
         //create a column matrix from tfidfIgnore!
         val tfidfColMatrix = transposeRowMatrix(new RowMatrix(tfidfIgnore))
@@ -62,25 +77,6 @@ object GroupUserReviews {
       tfidfIgnore
     }
 
-    //builds a lookup table for user/business ids and hashcodes for their tfidf vectors
-    def buildLookupTable(tfidfIgnore: RDD[Vector], ids: DataFrame, business: Boolean): DataFrame = {
-      //create the hashes
-      val createdHashes = tfidfIgnore.map(vec => vec.hashCode())
-      //transform created hashes into DF
-      val hashesDF = createdHashes.toDF("hashVal")
-      //create a common key in userDF and hashesDF
-      ids = ids.withColumn("rowId1", monotonically_increasing_id())
-      val hashesIDDF = hashesDF.withColumn("rowId2", monotonically_increasing_id())
-      if (!business) { //make and return userHashMapping
-        val userHashMapping = ids.as("df1").join(hashesIDDF.as("df2"), ids("rowId1") === hashesIDDF("rowId2"), "inner").select("df1.user_id", "df2.hashVal")
-        userHashMapping
-      }
-      else {
-        val businessHashMapping = ids.as("df1").join(hashesIDDF.as("df2"), ids("rowId1") === hashesIDDF("rowId2"), "inner").select("df1.business_id", "df2.hashVal")
-        businessHashMapping
-      }
-    }
-
     //METHODS TO TRANPOSE ROW MATRICES SHAMELESSLY STOLEN FROM STACK OVERFLOW <3
     //https://stackoverflow.com/questions/30556478/matrix-transpose-on-rowmatrix-in-spark
     def transposeRowMatrix(m: RowMatrix): RowMatrix = {
@@ -90,7 +86,7 @@ object GroupUserReviews {
       .sortByKey().map(_._2) // sort rows and remove row indexes
       .map(buildRow) // restore order of elements in each row and remove column indexes
       new RowMatrix(transposedRowsRDD)
-  }
+    }
 
 
   def rowToTransposedTriplet(row: Vector, rowIndex: Long): Array[(Long, (Long, Double))] = {
