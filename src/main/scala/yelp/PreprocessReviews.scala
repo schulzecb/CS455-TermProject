@@ -24,7 +24,7 @@ import org.apache.spark.sql.Row
  * --packages JohnSnowLabs:spark-nlp:1.5.1 or 
  * --jars ./spark-nlp-1.5.1.jar
  */
-object PreprocessReviews {
+object PreprocessReviewsBusiness {
 	def main (args: Array[String]): Unit = {
 		// Start a spark session
 		val spark = SparkSession.builder().appName("Preprocess Business Reviews").getOrCreate()
@@ -55,6 +55,42 @@ object PreprocessReviews {
 			case Row(business_id: String, finished_stems: Seq[String]) =>
 				(business_id, joinArr(finished_stems))
 		}).toDF("business_id", "reviews")
+		// Write out results
+		dfToWrite.write.format("csv").option("header", "true").option("multiline", "true").save(args(1))
+	}
+}
+
+object PreprocessReviewsUser {
+	def main (args: Array[String]): Unit = {
+		// Start a spark session
+		val spark = SparkSession.builder().appName("Preprocess Business Reviews").getOrCreate()
+		import spark.implicits._
+		// Read in data
+		val businessReviews = spark.read.option("header", "true").option("delimiter", ",").csv(args(0))
+		// Needed to create pipeline
+		val documentAssembler = new DocumentAssembler().setInputCol("reviews")
+		// Tokenize
+		val tokenizer = new Tokenizer().setInputCols("document").setOutputCol("token")
+		// Remove dirty characters
+		val normalizer = new Normalizer().setInputCols("token").setOutputCol("normal")
+		// Correct poor spelling
+		var spell_checker = new NorvigSweetingApproach().setInputCols("normal").setOutputCol("spell").setDictionary("/dictionaries/word.list")
+		// Stem words
+		val stemmer = new Stemmer().setInputCols("spell").setOutputCol("stems")
+		// Get out a clean result
+		val finisher = new Finisher().setInputCols("stems")
+		// We need some training text to train on
+		val training = spark.sparkContext.textFile("/dictionaries/holmes.txt").map(_.replace("[^\\w\\s]", "")).toDF("reviews")
+		// Create a pipeline
+		val pipeline = new Pipeline().setStages(Array(documentAssembler, tokenizer, normalizer, spell_checker, stemmer, finisher))
+		// Train pipeline and get output data
+		val output = pipeline.fit(training).transform(businessReviews)
+		// Transform arrays to regular strings
+		val joinArr = (arr: Seq[String]) => arr.mkString(" ")
+		val dfToWrite = output.select("user_id", "finished_stems").rdd.map({
+			case Row(business_id: String, finished_stems: Seq[String]) =>
+				(business_id, joinArr(finished_stems))
+		}).toDF("user_id", "reviews")
 		// Write out results
 		dfToWrite.write.format("csv").option("header", "true").option("multiline", "true").save(args(1))
 	}
