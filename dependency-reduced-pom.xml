@@ -34,11 +34,6 @@
   </build>
   <repositories>
     <repository>
-      <id>bintrayjohnsnowlabsjohnsnowlabs</id>
-      <name>bintray-johnsnowlabs-johnsnowlabs</name>
-      <url>https://dl.bintray.com/johnsnowlabs/johnsnowlabs/</url>
-    </repository>
-    <repository>
       <id>SparkPackagesRepo</id>
       <name>Spark Packages Repo</name>
       <url>https://dl.bintray.com/spark-packages/maven/</url>
@@ -58,10 +53,6 @@
       <scope>provided</scope>
       <exclusions>
         <exclusion>
-          <artifactId>chill_2.11</artifactId>
-          <groupId>com.twitter</groupId>
-        </exclusion>
-        <exclusion>
           <artifactId>spark-launcher_2.11</artifactId>
           <groupId>org.apache.spark</groupId>
         </exclusion>
@@ -74,20 +65,12 @@
           <groupId>org.apache.spark</groupId>
         </exclusion>
         <exclusion>
-          <artifactId>spark-unsafe_2.11</artifactId>
-          <groupId>org.apache.spark</groupId>
-        </exclusion>
-        <exclusion>
           <artifactId>json4s-jackson_2.11</artifactId>
           <groupId>org.json4s</groupId>
         </exclusion>
         <exclusion>
           <artifactId>jackson-module-scala_2.11</artifactId>
           <groupId>com.fasterxml.jackson.module</groupId>
-        </exclusion>
-        <exclusion>
-          <artifactId>spark-tags_2.11</artifactId>
-          <groupId>org.apache.spark</groupId>
         </exclusion>
       </exclusions>
     </dependency>
