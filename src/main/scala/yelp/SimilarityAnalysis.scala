@@ -8,6 +8,7 @@ import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.DataFrame
+import scala.collection._
 
 import org.apache.spark.mllib.feature.{HashingTF, IDF}
 import org.apache.spark.mllib.linalg.Vector
@@ -39,20 +40,12 @@ object GroupUserReviews {
         val usersTFIDF = performTFIDF(user_reviews.select("reviews"))
         val businessTFIDF = performTFIDF(business_reviews.select("reviews"))
 
-        //now that we did that, we need to build a lookup table based on user ids and the hash codes of the tfidf vectors
-        //create the hashes
-        val userCreatedHashes = usersTFIDF.map(vec => vec.hashCode())
-        val businessCreatedHashes = businessTFIDF.map(vec => vec.hashCode())
-        //transform created hashes into DF
-        val userHashesDF = userCreatedHashes.toDF("hashVal")
-        val businessHashesDF = businessCreatedHashes.toDF("hashVal")
-
         //create a mapping from user and business indices to ids for references later
         val userList = user_reviews.select("user_id").withColumn("id", monotonically_increasing_id()).map(r=>(r(1)+"", r.getString(0))).collect()
         val userLookup = userList.groupBy(_._1).mapValues(_.map(_._2))
         
         val businessList = business_reviews.select("business_id").withColumn("id", monotonically_increasing_id() + 10).map(r=>(r(1)+"", r.getString(0))).collect()
-        val businessLookup = userList.groupBy(_._1).mapValues(_.map(_._2))
+        val businessLookup = businessList.groupBy(_._1).mapValues(_.map(_._2))
 
         //create a row matrix from everything!
         val joinedRDD = usersTFIDF.union(businessTFIDF)
@@ -60,46 +53,56 @@ object GroupUserReviews {
         val transposedMatrix = transposeRowMatrix(rowMatrix)
 
         //attempt dimsum
-        val threshold = 0.8
-        val estimates = transposedMatrix.columnSimilarities(threshold)
+        // val threshold = 0.8
+        val estimates = transposedMatrix.columnSimilarities()
 
         // Filter for user indices and find closest match        
         val indexedEstimates = estimates.toIndexedRowMatrix()
         // Returns an RDD of Row (userId, closestBusinessId)
         // IDs go from 1 - 10, while indices go 0 - 9 for users
-        val userIDBusinessID = indexedEstimates.rows.filter(_.index < 10).map(row => {
+        val userIDBusinessIDList = indexedEstimates.rows.filter(_.index < 10).map(row => {
             val indexOfInterest = row.index
             val closestMaxIndex = argMaxRange(row.vector, 10, row.vector.size - 1)
-            val userID = userLookup(indexOfInterest + "")
-            val closestBusinessId = businessLookup(closestMaxIndex + "")
-            Row (userID, closestBusinessId)
+            (indexOfInterest, closestMaxIndex)
+        }).collect()
+        // Get the id mappings
+        val userIDBusinessID = userIDBusinessIDList.map(item => {
+            val uid = userLookup(item._1 + "")(0)
+            val bid = businessLookup(item._2 + "")(0)
+            (uid, bid)
         })
+        // IDs parallel
+        val idsParallel = spark.sparkContext.parallelize(userIDBusinessID.map(tup => Row(tup._1, tup._2)))
+        
         val schema = StructType(Seq(StructField(name = "user_id", dataType = StringType, nullable = false),StructField(name = "business_id", dataType = StringType, nullable = false)))
-        val idsDF = spark.createDataFrame(userIDBusinessID, schema)
+        val idsDF = spark.createDataFrame(idsParallel, schema)
         // Map IDs to names
         val businessData = spark.read.option("header", "true").option("multiline", "true").csv("/yelp-data/yelp_business.csv")
-        
-        val businessIDsToNames = businessData.join(idsDF, businessData.col("business_id") == idsDF.col("business_id")).select("business_id", "name")
+        val businessIDsToNames = businessData.join(idsDF, "business_id").select("business_id", "name").map(r=>(r.getString(0), r(1) + "")).collect()
+        val bIdmap = businessIDsToNames.groupBy(_._1).mapValues(_.map(_._2))
         
         val userData = spark.read.option("header", "true").option("multiline", "true").csv("/yelp-data/yelp_user.csv")
+        val userIDToNames = userData.join(idsDF, "user_id").select("user_id", "name").map(r=>(r.getString(0), r(1)+"")).collect()
+        val uIdmap = userIDToNames.groupBy(_._1).mapValues(_.map(_._2))
         
-        val userIDToNames = userData.join(idsDF, userData.col("user_id") == idsDF.col("user_id")).select("user_id", "name")
-        
-        val userToBusinessPair = idsDF.rdd.map(row => {
-            val username = userIDToNames.where(col("user_id") === row(0)).select("name")
-            val businessname = businessIDsToNames.where(col("business_id") === row(1)).select("name")
+        val userToBusinessPair = userIDBusinessID.map(row => {
+            val username = uIdmap(row._1 + "")(0)
+            val businessname = bIdmap(row._2 + "")(0)
             (username, businessname)
         })
         
-        userToBusinessPair.saveAsTextFile("/thiswillneverwork/")
+        val finalParallel = spark.sparkContext.parallelize(userToBusinessPair.map(tup => Row(tup._1, tup._2)))
+        
+        finalParallel.saveAsTextFile("/thiswillneverwork/")
     }
 
     def argMaxRange(vector: Vector, i: Int, j: Int): Int = {
-        var max = 0
+        var max: Double = 0.0
         var index = i
         for (k <- i to j) {
             if (vector.apply(k) > max) {
                 index = k
+                max = vector.apply(k)
             }
         }
         index
