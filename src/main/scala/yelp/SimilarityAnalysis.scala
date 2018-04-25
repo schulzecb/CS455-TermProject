@@ -28,14 +28,14 @@ import org.apache.spark.mllib.linalg.distributed.{IndexedRow, IndexedRowMatrix, 
 object SimilarityAnalysis {
     def main (args: Array[String]): Unit = {
         // Create new spark session
-        val spark = SparkSession.builder().appName("Group User Reviews").getOrCreate()
+        val spark = SparkSession.builder().appName("Similarity Analysis").getOrCreate()
         import spark.implicits._
         // read in the users-cleaned.csv from HDFS
         //val user_reviews = spark.read.option("header", "true").csv("/processed-data/user/users-cleaned.csv")
         val user_reviews = spark.read.option("header", "true").csv(args(0))
         //read in the business-cleaned (small or large) from HDFS
         //val business_reviews = spark.read.option("header", "true").option("multiline", "true").csv("/process-data/business/sampled-set/sampled-business.csv").sample(true, .1)
-        val business_reviews = spark.read.option("header", "true").option("multiline", "true").csv(args(1))
+        val business_reviews = spark.read.option("header", "true").option("multiline", "true").csv(args(1)).sample(true, .1)
 
         // /process-data/business/sampled-set
 
@@ -91,10 +91,10 @@ object SimilarityAnalysis {
         val userToBusinessPair = userIDBusinessID.map(row => {
             val username = uIdmap(row._1 + "")(0)
             val businessname = bIdmap(row._2 + "")(0)
-            (username, businessname)
+            (username, row._1, businessname, row._2)
         })
 
-        val finalParallel = spark.sparkContext.parallelize(userToBusinessPair.map(tup => Row(tup._1, tup._2)))
+        val finalParallel = spark.sparkContext.parallelize(userToBusinessPair.map(tup => Row(tup._1, tup._2, tup._3, tup._4)))
 
         finalParallel.saveAsTextFile(args(4))
     }
