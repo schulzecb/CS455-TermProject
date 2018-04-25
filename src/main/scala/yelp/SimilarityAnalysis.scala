@@ -28,7 +28,7 @@ object GroupUserReviews {
         //read in the users-cleaned.csv from HDFS
         val user_reviews = spark.read.option("header", "true").csv(args(0))
         //read in the business-cleaned (small or large) from HDFS
-        val business_reviews = spark.read.option("header", "true").csv(args(1))
+        val business_reviews = spark.read.option("header", "true").option("multiline", "true").csv(args(1))
 
         //perform TFIDF on both users and businesses
         val usersTFIDF = performTFIDF(user_reviews.select("reviews"))
@@ -42,15 +42,8 @@ object GroupUserReviews {
         val userHashesDF = userCreatedHashes.toDF("hashVal")
         val businessHashesDF = businessCreatedHashes.toDF("hashVal")
 
-        //create a common key in userDF and hashesDF
-        //val u_commonKey = user_reviews.select("user_id").withColumn("rowId1", monotonically_increasing_id())
-        //val userHashesIDDF = userHashesDF.withColumn("rowId2", monotonically_increasing_id())
-        //val userHashMapping = u_commonKey.as("df1").join(userHashesIDDF.as("df2"), u_commonKey("rowId1") === userHashesIDDF("rowId2"), "inner").select("df1.user_id", "df2.hashVal")
+        //create a mapping from user and business indices to ids for references later
         val userLookup = user_reviews.select("user_id").withColumn("id", monotonically_increasing_id());
-
-        //val business_commonKey = business_reviews.select("business_id").withColumn("rowId1", monotonically_increasing_id())
-        //val businessHashesIDDF = businessHashesDF.withColumn("rowId2", monotonically_increasing_id())
-        //val businessHashMapping = business_commonKey.as("df1").join(businessHashesIDDF.as("df2"), business_commonKey("rowId1") === businessHashesIDDF("rowId2"), "inner").select("df1.business_id", "df2.hashVal")
         val businessLookup = business_reviews.select("business_id").withColumn("id", monotonically_increasing_id() + 10);
 
         //create a row matrix from everything!
@@ -58,24 +51,45 @@ object GroupUserReviews {
         val rowMatrix = new RowMatrix(joinedRDD)
         val transposedMatrix = transposeRowMatrix(rowMatrix)
 
-
         //attempt dimsum
         val threshold = 0.8
         val estimates = tfidfColMatrix.columnSimilarities(threshold)
+
         // Filter for user indices and find closest match        
         val indexedEstimates = estimates.toIndexedRowMatrix()
         // Returns an RDD of tuples (userId, closestBusinessId)
-        val bestSimilarityMatches = indexedEstimates.filter(_.index < 10).map(row => {
+        userLookup.cache()
+        businessLookup.cache()
+        // IDs go from 1 - 10, while indices go 0 - 9 for users
+        val userIDBusinessID = indexedEstimates.filter(_.index < 11).map(row => {
             val indexOfInterest = row.index
-            val closestMaxIndex = argMaxRange(row.vector, indexOfInterest, row.vector.size)
-            val closestBusinessId = // look up closestMaxIndex
-            val userID = // look up indexOfInterest
+            val closestMaxIndex = argMaxRange(row.vector, 10, row.vector.size)
+            val userID = userLookup.where(col("id") === indexOfInterest).select("user_id")
+            val closestBusinessId = businessLookup.where(col("id") === closestMaxIndex).select("user_id"))
+        }).toDF("user_id", "business_id")
+        userLookup.unpersist()
+        businessLookup.unpersist()
+        // Map IDs to names
+        val businessData = spark.read.option("header", "true").option("multiline", "true").csv("/yelp-data/yelp_business.csv")
+        
+        val businessIDsToNames = businessData.join(userIDBusinessID, businessData.col("business_id") == userIDBusinessID.col("business_id")).select("business_id", "name")
+        
+        val userData = spark.read.option("header", "true").option("multiline", "true").csv("/yelp-data/yelp_user.csv")
+        
+        val userIDToNames = userData.join(userIDBusinessID, userData.col("user_id") == userIDBusinessID.col("user_id")).select("user_id", "name")
+        
+        val userToBusinessPair = userIDBusinessID.rdd.map(row => {
+            val username = userIDToNames.where(col("user_id") === row(0)).select("name")
+            val businessname = businessIDsToNames.where(col("business_id") === row(1)).select("name")
+            (username, businessname)
         })
+        
+        userToBusinessPair.saveAsTextFile("/thiswillneverwork/")
     }
 
     def argMaxRange(vector: Vector, i: Int, j: Int): Int = {
         var max = 0
-        var index = 0
+        var index = i
         for (k <- i to j) {
             if (vector.appy(k) > max) {
                 index = k
