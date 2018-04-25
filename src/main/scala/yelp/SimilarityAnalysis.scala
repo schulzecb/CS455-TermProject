@@ -59,7 +59,26 @@ object GroupUserReviews {
         //attempt dimsum
         val threshold = 0.8
         val estimates = tfidfColMatrix.columnSimilarities(threshold)
+        // Filter for user indices and find closest match        
+        val indexedEstimates = estimates.toIndexedRowMatrix()
+        // Returns an RDD of tuples (userId, closestBusinessId)
+        val bestSimilarityMatches = indexedEstimates.filter(_.index < 10).map(row => {
+            val indexOfInterest = row.index
+            val closestMaxIndex = argMaxRange(row.vector, indexOfInterest, row.vector.size)
+            val closestBusinessId = // look up closestMaxIndex
+            val userID = // look up indexOfInterest
+        })
+    }
 
+    def argMaxRange(vector: Vector, i: Int, j: Int): Int = {
+        var max = 0
+        var index = 0
+        for (k <- i to j) {
+            if (vector.appy(k) > max) {
+                index = k
+            }
+        }
+        index
     }
 
     //method to perform tfidf -- returns tfidfIgnore
