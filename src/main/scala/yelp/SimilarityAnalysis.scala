@@ -4,7 +4,7 @@ import org.apache.spark.SparkContext
 import org.apache.spark.SparkContext._
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.functions._
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.DataFrame
@@ -19,21 +19,24 @@ import org.apache.spark.mllib.linalg.distributed.{IndexedRow, IndexedRowMatrix, 
 /**
  * To run:
  * $SPARK_HOME/bin/spark-submit --class yelp.GroupUserReviews ./target/original-yelp-reviews-1.0.jar
- * \<hdfs_input_path> (selected user reviews)
+ * \<hdfs_input_path> (clean user reviews)
+ * \<hdfs_input_path> (clean business reviews)
+ * \<hdfs_input_path> (yelp_business)
+ * \<hdfs_input_path> (yelp_user)
  * \<hdfs_output_path>
  */
-object GroupUserReviews {
+object SimilarityAnalysis {
     def main (args: Array[String]): Unit = {
         // Create new spark session
         val spark = SparkSession.builder().appName("Group User Reviews").getOrCreate()
         import spark.implicits._
         // read in the users-cleaned.csv from HDFS
-        val user_reviews = spark.read.option("header", "true").csv("/processed-data/user/users-cleaned.csv")
+        //val user_reviews = spark.read.option("header", "true").csv("/processed-data/user/users-cleaned.csv")
         val user_reviews = spark.read.option("header", "true").csv(args(0))
         //read in the business-cleaned (small or large) from HDFS
-        val business_reviews = spark.read.option("header", "true").option("multiline", "true").csv("/process-data/business/sampled-set/sampled-business.csv").sample(true, .1)
+        //val business_reviews = spark.read.option("header", "true").option("multiline", "true").csv("/process-data/business/sampled-set/sampled-business.csv").sample(true, .1)
         val business_reviews = spark.read.option("header", "true").option("multiline", "true").csv(args(1))
-        
+
         // /process-data/business/sampled-set
 
         //perform TFIDF on both users and businesses
@@ -43,7 +46,7 @@ object GroupUserReviews {
         //create a mapping from user and business indices to ids for references later
         val userList = user_reviews.select("user_id").withColumn("id", monotonically_increasing_id()).map(r=>(r(1)+"", r.getString(0))).collect()
         val userLookup = userList.groupBy(_._1).mapValues(_.map(_._2))
-        
+
         val businessList = business_reviews.select("business_id").withColumn("id", monotonically_increasing_id() + 10).map(r=>(r(1)+"", r.getString(0))).collect()
         val businessLookup = businessList.groupBy(_._1).mapValues(_.map(_._2))
 
@@ -56,7 +59,7 @@ object GroupUserReviews {
         // val threshold = 0.8
         val estimates = transposedMatrix.columnSimilarities()
 
-        // Filter for user indices and find closest match        
+        // Filter for user indices and find closest match
         val indexedEstimates = estimates.toIndexedRowMatrix()
         // Returns an RDD of Row (userId, closestBusinessId)
         // IDs go from 1 - 10, while indices go 0 - 9 for users
@@ -73,27 +76,27 @@ object GroupUserReviews {
         })
         // IDs parallel
         val idsParallel = spark.sparkContext.parallelize(userIDBusinessID.map(tup => Row(tup._1, tup._2)))
-        
+
         val schema = StructType(Seq(StructField(name = "user_id", dataType = StringType, nullable = false),StructField(name = "business_id", dataType = StringType, nullable = false)))
         val idsDF = spark.createDataFrame(idsParallel, schema)
         // Map IDs to names
-        val businessData = spark.read.option("header", "true").option("multiline", "true").csv("/yelp-data/yelp_business.csv")
+        val businessData = spark.read.option("header", "true").option("multiline", "true").csv(args(2))
         val businessIDsToNames = businessData.join(idsDF, "business_id").select("business_id", "name").map(r=>(r.getString(0), r(1) + "")).collect()
         val bIdmap = businessIDsToNames.groupBy(_._1).mapValues(_.map(_._2))
-        
-        val userData = spark.read.option("header", "true").option("multiline", "true").csv("/yelp-data/yelp_user.csv")
+
+        val userData = spark.read.option("header", "true").option("multiline", "true").csv(args(3))
         val userIDToNames = userData.join(idsDF, "user_id").select("user_id", "name").map(r=>(r.getString(0), r(1)+"")).collect()
         val uIdmap = userIDToNames.groupBy(_._1).mapValues(_.map(_._2))
-        
+
         val userToBusinessPair = userIDBusinessID.map(row => {
             val username = uIdmap(row._1 + "")(0)
             val businessname = bIdmap(row._2 + "")(0)
             (username, businessname)
         })
-        
+
         val finalParallel = spark.sparkContext.parallelize(userToBusinessPair.map(tup => Row(tup._1, tup._2)))
-        
-        finalParallel.saveAsTextFile("/thiswillneverwork/")
+
+        finalParallel.saveAsTextFile(args(4))
     }
 
     def argMaxRange(vector: Vector, i: Int, j: Int): Int = {
