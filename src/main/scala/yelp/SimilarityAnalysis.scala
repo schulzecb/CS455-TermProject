@@ -26,9 +26,13 @@ object GroupUserReviews {
         val spark = SparkSession.builder().appName("Group User Reviews").getOrCreate()
 
         //read in the users-cleaned.csv from HDFS
+        // val user_reviews = spark.read.option("header", "true").csv("/processed-data/user/users-cleaned.csv")
         val user_reviews = spark.read.option("header", "true").csv(args(0))
         //read in the business-cleaned (small or large) from HDFS
+        // val business_reviews = spark.read.option("header", "true").option("multiline", "true").csv("/process-data/business/sampled-set/sampled-business.csv")
         val business_reviews = spark.read.option("header", "true").option("multiline", "true").csv(args(1))
+        
+        // /process-data/business/sampled-set
 
         //perform TFIDF on both users and businesses
         val usersTFIDF = performTFIDF(user_reviews.select("reviews"))
@@ -61,7 +65,7 @@ object GroupUserReviews {
         userLookup.cache()
         businessLookup.cache()
         // IDs go from 1 - 10, while indices go 0 - 9 for users
-        val userIDBusinessID = indexedEstimates.filter(_.index < 11).map(row => {
+        val userIDBusinessID = indexedEstimates.filter(_.index < 10).map(row => {
             val indexOfInterest = row.index
             val closestMaxIndex = argMaxRange(row.vector, 10, row.vector.size)
             val userID = userLookup.where(col("id") === indexOfInterest).select("user_id")
@@ -91,7 +95,7 @@ object GroupUserReviews {
         var max = 0
         var index = i
         for (k <- i to j) {
-            if (vector.appy(k) > max) {
+            if (vector.apply(k) > max) {
                 index = k
             }
         }
