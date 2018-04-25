@@ -7,6 +7,7 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.types._
+import org.apache.spark.sql.DataFrame
 
 import org.apache.spark.mllib.feature.{HashingTF, IDF}
 import org.apache.spark.mllib.linalg.Vector
@@ -24,12 +25,12 @@ object GroupUserReviews {
     def main (args: Array[String]): Unit = {
         // Create new spark session
         val spark = SparkSession.builder().appName("Group User Reviews").getOrCreate()
-
-        //read in the users-cleaned.csv from HDFS
-        // val user_reviews = spark.read.option("header", "true").csv("/processed-data/user/users-cleaned.csv")
+        import spark.implicits._
+        // read in the users-cleaned.csv from HDFS
+        val user_reviews = spark.read.option("header", "true").csv("/processed-data/user/users-cleaned.csv")
         val user_reviews = spark.read.option("header", "true").csv(args(0))
         //read in the business-cleaned (small or large) from HDFS
-        // val business_reviews = spark.read.option("header", "true").option("multiline", "true").csv("/process-data/business/sampled-set/sampled-business.csv")
+        val business_reviews = spark.read.option("header", "true").option("multiline", "true").csv("/process-data/business/sampled-set/sampled-business.csv").sample(true, .1)
         val business_reviews = spark.read.option("header", "true").option("multiline", "true").csv(args(1))
         
         // /process-data/business/sampled-set
@@ -47,8 +48,11 @@ object GroupUserReviews {
         val businessHashesDF = businessCreatedHashes.toDF("hashVal")
 
         //create a mapping from user and business indices to ids for references later
-        val userLookup = user_reviews.select("user_id").withColumn("id", monotonically_increasing_id());
-        val businessLookup = business_reviews.select("business_id").withColumn("id", monotonically_increasing_id() + 10);
+        val userList = user_reviews.select("user_id").withColumn("id", monotonically_increasing_id()).map(r=>(r(1)+"", r.getString(0))).collect()
+        val userLookup = userList.groupBy(_._1).mapValues(_.map(_._2))
+        
+        val businessList = business_reviews.select("business_id").withColumn("id", monotonically_increasing_id() + 10).map(r=>(r(1)+"", r.getString(0))).collect()
+        val businessLookup = userList.groupBy(_._1).mapValues(_.map(_._2))
 
         //create a row matrix from everything!
         val joinedRDD = usersTFIDF.union(businessTFIDF)
@@ -57,32 +61,31 @@ object GroupUserReviews {
 
         //attempt dimsum
         val threshold = 0.8
-        val estimates = tfidfColMatrix.columnSimilarities(threshold)
+        val estimates = transposedMatrix.columnSimilarities(threshold)
 
         // Filter for user indices and find closest match        
         val indexedEstimates = estimates.toIndexedRowMatrix()
-        // Returns an RDD of tuples (userId, closestBusinessId)
-        userLookup.cache()
-        businessLookup.cache()
+        // Returns an RDD of Row (userId, closestBusinessId)
         // IDs go from 1 - 10, while indices go 0 - 9 for users
-        val userIDBusinessID = indexedEstimates.filter(_.index < 10).map(row => {
+        val userIDBusinessID = indexedEstimates.rows.filter(_.index < 10).map(row => {
             val indexOfInterest = row.index
-            val closestMaxIndex = argMaxRange(row.vector, 10, row.vector.size)
-            val userID = userLookup.where(col("id") === indexOfInterest).select("user_id")
-            val closestBusinessId = businessLookup.where(col("id") === closestMaxIndex).select("user_id"))
-        }).toDF("user_id", "business_id")
-        userLookup.unpersist()
-        businessLookup.unpersist()
+            val closestMaxIndex = argMaxRange(row.vector, 10, row.vector.size - 1)
+            val userID = userLookup(indexOfInterest + "")
+            val closestBusinessId = businessLookup(closestMaxIndex + "")
+            Row (userID, closestBusinessId)
+        })
+        val schema = StructType(Seq(StructField(name = "user_id", dataType = StringType, nullable = false),StructField(name = "business_id", dataType = StringType, nullable = false)))
+        val idsDF = spark.createDataFrame(userIDBusinessID, schema)
         // Map IDs to names
         val businessData = spark.read.option("header", "true").option("multiline", "true").csv("/yelp-data/yelp_business.csv")
         
-        val businessIDsToNames = businessData.join(userIDBusinessID, businessData.col("business_id") == userIDBusinessID.col("business_id")).select("business_id", "name")
+        val businessIDsToNames = businessData.join(idsDF, businessData.col("business_id") == idsDF.col("business_id")).select("business_id", "name")
         
         val userData = spark.read.option("header", "true").option("multiline", "true").csv("/yelp-data/yelp_user.csv")
         
-        val userIDToNames = userData.join(userIDBusinessID, userData.col("user_id") == userIDBusinessID.col("user_id")).select("user_id", "name")
+        val userIDToNames = userData.join(idsDF, userData.col("user_id") == idsDF.col("user_id")).select("user_id", "name")
         
-        val userToBusinessPair = userIDBusinessID.rdd.map(row => {
+        val userToBusinessPair = idsDF.rdd.map(row => {
             val username = userIDToNames.where(col("user_id") === row(0)).select("name")
             val businessname = businessIDsToNames.where(col("business_id") === row(1)).select("name")
             (username, businessname)
