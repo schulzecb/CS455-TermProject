@@ -43,18 +43,21 @@ object GroupUserReviews {
         val businessHashesDF = businessCreatedHashes.toDF("hashVal")
 
         //create a common key in userDF and hashesDF
-        val u_commonKey = user_reviews.select("user_id").withColumn("rowId1", monotonically_increasing_id())
-        val userHashesIDDF = userHashesDF.withColumn("rowId2", monotonically_increasing_id())
-        val userHashMapping = u_commonKey.as("df1").join(userHashesIDDF.as("df2"), u_commonKey("rowId1") === userHashesIDDF("rowId2"), "inner").select("df1.user_id", "df2.hashVal")
+        //val u_commonKey = user_reviews.select("user_id").withColumn("rowId1", monotonically_increasing_id())
+        //val userHashesIDDF = userHashesDF.withColumn("rowId2", monotonically_increasing_id())
+        //val userHashMapping = u_commonKey.as("df1").join(userHashesIDDF.as("df2"), u_commonKey("rowId1") === userHashesIDDF("rowId2"), "inner").select("df1.user_id", "df2.hashVal")
+        val userLookup = user_reviews.select("user_id").withColumn("id", monotonically_increasing_id());
 
-        val business_commonKey = business_reviews.select("business_id").withColumn("rowId1", monotonically_increasing_id())
-        val businessHashesIDDF = businessHashesDF.withColumn("rowId2", monotonically_increasing_id())
-        val businessHashMapping = business_commonKey.as("df1").join(businessHashesIDDF.as("df2"), business_commonKey("rowId1") === businessHashesIDDF("rowId2"), "inner").select("df1.business_id", "df2.hashVal")
+        //val business_commonKey = business_reviews.select("business_id").withColumn("rowId1", monotonically_increasing_id())
+        //val businessHashesIDDF = businessHashesDF.withColumn("rowId2", monotonically_increasing_id())
+        //val businessHashMapping = business_commonKey.as("df1").join(businessHashesIDDF.as("df2"), business_commonKey("rowId1") === businessHashesIDDF("rowId2"), "inner").select("df1.business_id", "df2.hashVal")
+        val businessLookup = business_reviews.select("business_id").withColumn("id", monotonically_increasing_id() + 10);
 
         //create a row matrix from everything!
+        val joinedRDD = usersTFIDF.union(businessTFIDF)
+        val rowMatrix = new RowMatrix(joinedRDD)
+        val transposedMatrix = transposeRowMatrix(rowMatrix)
 
-        //create a column matrix from tfidfIgnore!
-        val tfidfColMatrix = transposeRowMatrix(new RowMatrix(tfidfIgnore))
 
         //attempt dimsum
         val threshold = 0.8
